@@ -18,99 +18,98 @@
 #
 
 import struct
-import sys
 from io import BytesIO
 
-
 try:
-	basestring  # py2
+    basestring  # py2
 except NameError:
-	basestring = str  # py3
+    basestring = str  # py3
 
 
 class PNG:
+    signature = bytearray((137, 80, 78, 71, 13, 10, 26, 10))
 
-	signature = bytearray ((137,80,78,71,13,10,26,10))
+    def __init__(self, f):
+        if isinstance(f, basestring):
+            f = open(f, "rb")
 
-	def __init__ (self, f):
+        self.f = f
+        self.IHDR = None
 
-		if isinstance(f, basestring):
-			f = open (f, 'rb')
+    def tell(self):
+        return self.f.tell()
 
-		self.f = f
-		self.IHDR = None
+    def seek(self, pos):
+        self.f.seek(pos)
 
-	def tell (self):
-		return self.f.tell ()
+    def stream(self):
+        return self.f
 
-	def seek (self, pos):
-		self.f.seek (pos)
+    def data(self):
+        self.seek(0)
+        return bytearray(self.f.read())
 
-	def stream (self):
-		return self.f
+    class BadSignature(Exception):
+        pass
 
-	def data (self):
-		self.seek (0)
-		return bytearray (self.f.read ())
+    class BadChunk(Exception):
+        pass
 
-	class BadSignature (Exception): pass
-	class BadChunk (Exception): pass
+    def read_signature(self):
+        header = bytearray(self.f.read(8))
+        if header != PNG.signature:
+            raise PNG.BadSignature
+        return PNG.signature
 
-	def read_signature (self):
-		header = bytearray (self.f.read (8))
-		if header != PNG.signature:
-			raise PNG.BadSignature
-		return PNG.signature
+    def read_chunk(self):
+        buf = self.f.read(4)
+        length = struct.unpack(">I", buf)[0]
+        chunk_type = self.f.read(4)
+        chunk_data = self.f.read(length)
+        if len(chunk_data) != length:
+            raise PNG.BadChunk
+        crc = self.f.read(4)
+        if len(crc) != 4:
+            raise PNG.BadChunk
+        return (chunk_type, chunk_data, crc)
 
-	def read_chunk (self):
-		buf = self.f.read (4)
-		length = struct.unpack (">I", buf)[0]
-		chunk_type = self.f.read (4)
-		chunk_data = self.f.read (length)
-		if len (chunk_data) != length:
-			raise PNG.BadChunk
-		crc = self.f.read (4)
-		if len (crc) != 4:
-			raise PNG.BadChunk
-		return (chunk_type, chunk_data, crc)
+    def read_IHDR(self):
+        (chunk_type, chunk_data, crc) = self.read_chunk()
+        if chunk_type != b"IHDR":
+            raise PNG.BadChunk
+        #  Width:              4 bytes
+        #  Height:             4 bytes
+        #  Bit depth:          1 byte
+        #  Color type:         1 byte
+        #  Compression method: 1 byte
+        #  Filter method:      1 byte
+        #  Interlace method:   1 byte
+        return struct.unpack(">IIBBBBB", chunk_data)
 
-	def read_IHDR (self):
-		(chunk_type, chunk_data, crc) = self.read_chunk ()
-		if chunk_type != b"IHDR":
-			raise PNG.BadChunk
-		#  Width:              4 bytes
-		#  Height:             4 bytes
-		#  Bit depth:          1 byte
-		#  Color type:         1 byte
-		#  Compression method: 1 byte
-		#  Filter method:      1 byte
-		#  Interlace method:   1 byte
-		return struct.unpack (">IIBBBBB", chunk_data)
+    def read_header(self):
+        self.read_signature()
+        self.IHDR = self.read_IHDR()
+        return self.IHDR
 
-	def read_header (self):
-		self.read_signature ()
-		self.IHDR = self.read_IHDR ()
-		return self.IHDR
+    def get_size(self):
+        if not self.IHDR:
+            pos = self.tell()
+            self.seek(0)
+            self.read_header()
+            self.seek(pos)
+        return self.IHDR[0:2]
 
-	def get_size (self):
-		if not self.IHDR:
-			pos = self.tell ()
-			self.seek (0)
-			self.read_header ()
-			self.seek (pos)
-		return self.IHDR[0:2]
-
-	def filter_chunks (self, chunks):
-		self.seek (0);
-		out = BytesIO ()
-		out.write (self.read_signature ())
-		while True:
-			chunk_type, chunk_data, crc = self.read_chunk ()
-			if chunk_type in chunks:
-				out.write (struct.pack (">I", len (chunk_data)))
-				out.write (chunk_type)
-				out.write (chunk_data)
-				out.write (crc)
-			if chunk_type == b"IEND":
-				break
-		return PNG (out)
+    def filter_chunks(self, chunks):
+        self.seek(0)
+        out = BytesIO()
+        out.write(self.read_signature())
+        while True:
+            chunk_type, chunk_data, crc = self.read_chunk()
+            if chunk_type in chunks:
+                out.write(struct.pack(">I", len(chunk_data)))
+                out.write(chunk_type)
+                out.write(chunk_data)
+                out.write(crc)
+            if chunk_type == b"IEND":
+                break
+        return PNG(out)
